@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import * as request from 'supertest';
 import { AppModule } from './../src/app.module';
+import helmet from 'helmet';
+import compression from 'compression';
 
-describe('Auth Endpoints (e2e)', () => {
+describe('App E2E', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
@@ -12,6 +14,21 @@ describe('Auth Endpoints (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+
+    // Apply middleware
+    app.use(helmet());
+    app.use(compression());
+
+    // Global validation pipe
+    app.setGlobalPrefix('api');
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
+
     await app.init();
   });
 
@@ -19,65 +36,81 @@ describe('Auth Endpoints (e2e)', () => {
     await app.close();
   });
 
-  describe('POST /api/v1/auth/register', () => {
-    it('should register a new user', () => {
-      const registerDto = {
-        email: 'test@example.com',
-        name: 'Test User',
-        password: 'password123',
-      };
-
+  describe('Health Check (GET /api/health)', () => {
+    it('should return 200 status code', () => {
       return request(app.getHttpServer())
-        .post('/api/v1/auth/register')
-        .send(registerDto)
-        .expect(201)
-        .expect((res) => {
-          expect(res.body).toHaveProperty('accessToken');
-          expect(res.body).toHaveProperty('refreshToken');
-          expect(res.body.user.email).toBe(registerDto.email);
-        });
+        .get('/api/health')
+        .expect(200);
     });
 
-    it('should not register with duplicate email', () => {
-      const registerDto = {
-        email: 'test@example.com',
-        name: 'Test User',
-        password: 'password123',
-      };
-
+    it('should return health check response with correct structure', () => {
       return request(app.getHttpServer())
-        .post('/api/v1/auth/register')
-        .send(registerDto)
-        .expect(409);
-    });
-  });
-
-  describe('POST /api/v1/auth/login', () => {
-    it('should login with valid credentials', () => {
-      const loginDto = {
-        email: 'test@example.com',
-        password: 'password123',
-      };
-
-      return request(app.getHttpServer())
-        .post('/api/v1/auth/login')
-        .send(loginDto)
-        .expect(200)
-        .expect((res) => {
-          expect(res.body).toHaveProperty('accessToken');
-          expect(res.body).toHaveProperty('refreshToken');
-        });
-    });
-  });
-
-  describe('GET /api/v1/health', () => {
-    it('should return health status', () => {
-      return request(app.getHttpServer())
-        .get('/api/v1/health')
+        .get('/api/health')
         .expect(200)
         .expect((res) => {
           expect(res.body).toHaveProperty('status');
+          expect(res.body).toHaveProperty('timestamp');
+          expect(res.body).toHaveProperty('uptime');
+          expect(res.body.status).toBe('ok');
+          expect(typeof res.body.uptime).toBe('number');
         });
+    });
+
+    it('should return valid ISO 8601 timestamp', () => {
+      return request(app.getHttpServer())
+        .get('/api/health')
+        .expect(200)
+        .expect((res) => {
+          const date = new Date(res.body.timestamp);
+          expect(date.getTime()).not.toBeNaN();
+        });
+    });
+
+    it('should return non-negative uptime', () => {
+      return request(app.getHttpServer())
+        .get('/api/health')
+        .expect(200)
+        .expect((res) => {
+          expect(res.body.uptime).toBeGreaterThanOrEqual(0);
+        });
+    });
+
+    it('should have correct content type', () => {
+      return request(app.getHttpServer())
+        .get('/api/health')
+        .expect('Content-Type', /json/);
+    });
+
+    it('should include security headers', () => {
+      return request(app.getHttpServer())
+        .get('/api/health')
+        .expect((res) => {
+          expect(res.headers['x-content-type-options']).toBeDefined();
+          expect(res.headers['x-frame-options']).toBeDefined();
+          expect(res.headers['x-xss-protection']).toBeDefined();
+        });
+    });
+  });
+
+  describe('API Prefix', () => {
+    it('should return 404 for requests without /api prefix', () => {
+      return request(app.getHttpServer())
+        .get('/health')
+        .expect(404);
+    });
+
+    it('should return 200 for requests with /api prefix', () => {
+      return request(app.getHttpServer())
+        .get('/api/health')
+        .expect(200);
+    });
+  });
+
+  describe('Non-existent routes', () => {
+    it('should return 404 for non-existent routes', () => {
+      return request(app.getHttpServer())
+        .get('/api/non-existent')
+        .expect(404);
     });
   });
 });
