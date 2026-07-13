@@ -1,0 +1,10 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'database'
+  - 'infrastructure'
+
+shared:
+  - 'tsconfig.json'
+  - '.eslintrc.json'
+  - 'prettier.config.js'
